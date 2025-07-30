@@ -10,12 +10,10 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     ContextTypes, filters
 )
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 
 # Configuration
-TELEGRAM_BOT_TOKEN = '7513255640:AAF69KQ-ujmvGFkWLK1E7yuCs13mxpsJtOE'
-GEMINI_API_KEY = 'AIzaSyDEjcd0nLhuET4Keu5NVU-Rf8bh76UzKik'
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", '7513255640:AAF69KQ-ujmvGFkWLK1E7yuCs13mxpsJtOE')
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", 'AIzaSyDEjcd0nLhuET4Keu5NVU-Rf8bh76UzKik')
 MODEL_NAME = 'gemini-2.0-flash'
 DATA_FILE = 'user_data.json'
 
@@ -33,9 +31,6 @@ else:
 def save_db():
     with open(DATA_FILE, 'w') as f:
         json.dump(db, f)
-
-# Scheduler
-scheduler = AsyncIOScheduler()
 
 # Gemini
 def ask_gemini(user_id, message):
@@ -83,19 +78,19 @@ async def send_later(context: ContextTypes.DEFAULT_TYPE):
     job_data = context.job.data
     await context.bot.send_message(chat_id=job_data['chat_id'], text=job_data['text'])
 
-# Daily ping
+# Daily ping (custom async loop)
 async def daily_check():
     now = datetime.utcnow()
     for user_id, data in db.items():
-        last_seen = datetime.fromisoformat(data.get("last_seen"))
-        if now - last_seen > timedelta(days=1):
-            try:
+        try:
+            last_seen = datetime.fromisoformat(data.get("last_seen"))
+            if now - last_seen > timedelta(days=1):
                 await application.bot.send_message(
                     chat_id=int(user_id),
                     text="Enthoru neramayi kandittu chetta 😢"
                 )
-            except Exception as e:
-                logger.error("Daily message error: %s", e)
+        except Exception as e:
+            logger.error("Daily message error: %s", e)
 
 # Message handler
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -114,8 +109,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if match:
             hour, minute = int(match.group(1)), int(match.group(2))
             meridian = match.group(3)
-            if meridian == "pm" and hour < 12: hour += 12
-            if meridian == "am" and hour == 12: hour = 0
+            if meridian == "pm" and hour < 12:
+                hour += 12
+            if meridian == "am" and hour == 12:
+                hour = 0
 
             now = datetime.now()
             reminder_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
@@ -133,21 +130,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response = ask_gemini(user_id, message)
     await update.message.reply_text(response)
 
-# Start
+# Start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     db.setdefault(str(user_id), {})["last_seen"] = str(datetime.utcnow())
     save_db()
     await update.message.reply_text("Hey! I’m your AI girlfriend 💬 Talk to me anytime, okay?")
 
-# Main
+# Custom scheduler loop using asyncio
+async def schedule_loop():
+    while True:
+        await daily_check()
+        await asyncio.sleep(86400)  # Wait 24 hours
+
+# Main entry
 async def main():
     global application
     application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    scheduler.add_job(daily_check, trigger=IntervalTrigger(hours=24))
-    scheduler.start()
+
+    # Start daily ping task
+    asyncio.create_task(schedule_loop())
+
     print("AI Bot running...")
     await application.run_polling()
 
