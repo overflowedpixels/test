@@ -16,7 +16,7 @@ import nest_asyncio
 nest_asyncio.apply()
 
 # Config
-TELEGRAM_BOT_TOKEN = '7513255640:AAF69KQ-ujmvGFkWLK1E7yuCs13mxpsJtOE'
+TELEGRAM_BOT_TOKEN = '7718899928:AAGVtvMIZZouJSewoztxorV0g4SATjDXHHM'
 GEMINI_API_KEY = 'AIzaSyDEjcd0nLhuET4Keu5NVU-Rf8bh76UzKik'
 MODEL_NAME = 'gemini-2.0-flash'
 DATA_FILE = 'user_data.json'
