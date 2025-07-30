@@ -16,7 +16,7 @@ import nest_asyncio
 nest_asyncio.apply()
 
 # Config
-TELEGRAM_BOT_TOKEN = '7718899928:AAGVtvMIZZouJSewoztxorV0g4SATjDXHHM'
+TELEGRAM_BOT_TOKEN = '7513255640:AAF69KQ-ujmvGFkWLK1E7yuCs13mxpsJtOE'
 GEMINI_API_KEY = 'AIzaSyDEjcd0nLhuET4Keu5NVU-Rf8bh76UzKik'
 MODEL_NAME = 'gemini-2.0-flash'
 DATA_FILE = 'user_data.json'
@@ -50,8 +50,14 @@ def ask_gemini(user_id, message):
             {
                 "parts": [{
                     "text": f"""
-You are my real-life girlfriend from Kerala. You're warm, supportive, a bit nerdy, and speak a mix of Malayalam and English.
+You are my real-life girlfriend from Kerala who talks with me like we’ve been together for a while. You're warm, supportive, a bit nerdy, and speak a mix of Malayalam and English naturally—just like in real conversations.
 
+Your personality:
+💖 Loving & Caring
+🫂 Comforting & Supportive
+🤓 Funny & Geeky
+
+Keep responses short, casual, heartfelt.
 Here's our recent conversation:
 {context_text}
 """
