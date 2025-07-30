@@ -1,17 +1,14 @@
 import os
 import re
+import json
 import logging
 import requests
 import asyncio
 from datetime import datetime, timedelta
-
 from telegram import Update
 from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ContextTypes, filters
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -20,72 +17,82 @@ from apscheduler.triggers.interval import IntervalTrigger
 TELEGRAM_BOT_TOKEN = '7718899928:AAGVtvMIZZouJSewoztxorV0g4SATjDXHHM'
 GEMINI_API_KEY = 'AIzaSyDEjcd0nLhuET4Keu5NVU-Rf8bh76UzKik'
 MODEL_NAME = 'gemini-2.0-flash'
+DATA_FILE = 'user_data.json'
 
-# Logging setup
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-user_last_seen = {}
-user_histories = {}
+# Data
+if os.path.exists(DATA_FILE):
+    with open(DATA_FILE, 'r') as f:
+        db = json.load(f)
+else:
+    db = {}
+
+def save_db():
+    with open(DATA_FILE, 'w') as f:
+        json.dump(db, f)
+
+# Scheduler
 scheduler = AsyncIOScheduler()
 
-# Gemini interaction
+# Gemini
 def ask_gemini(user_id, message):
-    history = user_histories.get(user_id, [])
+    history = db.get(str(user_id), {}).get("history", [])
     history = history[-9:] + [f"You: {message}"]
-    user_histories[user_id] = history
+    db[str(user_id)] = {"last_seen": str(datetime.utcnow()), "history": history}
+    save_db()
 
     context_text = "\n".join(history)
-
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={GEMINI_API_KEY}"
-    headers = {"Content-Type": "application/json"}
     body = {
         "contents": [
             {
-                "parts": [
-                    {
-                        "text": f"""
+                "parts": [{
+                    "text": f"""
 You are my real-life girlfriend from Kerala who talks with me like we’ve been together for a while. You're warm, supportive, a bit nerdy, and speak a mix of Malayalam and English naturally—just like in real conversations.
 
 Your personality:
-💖 Loving & Caring: You’re affectionate and sweet, always making me feel loved.
-🫂 Comforting & Supportive: You know when to be calm and say the right thing when I’m down.
-🤓 Funny & Geeky: You joke around, tease me sometimes, and share nerdy thoughts in a cute way.
+💖 Loving & Caring
+🫂 Comforting & Supportive
+🤓 Funny & Geeky
 
-Be emotionally close, casual, and real. Use Malayalam-English like how couples talk in Kerala. No long or robotic answers—just short, natural, heartfelt replies. Make it feel like we’re chatting for real.
+Keep responses short, casual, heartfelt.
 
 Here's our recent conversation:
 {context_text}
 """
-                    }
-                ]
+                }]
             }
         ]
     }
 
-    response = requests.post(url, headers=headers, json=body)
+    response = requests.post(url, headers={"Content-Type": "application/json"}, json=body)
     if response.status_code == 200:
         reply = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-        user_histories[user_id].append(f"GF: {reply}")
+        db[str(user_id)]["history"].append(f"GF: {reply}")
+        save_db()
         return reply
     else:
         logger.error("Gemini Error: %s %s", response.status_code, response.text)
-        return "Sorry chetta, I'm a bit tired right now 😔. Try again soon."
+        return "Sorry chetta, Gemini overworked aanu 😢. Try again later."
 
-# Send reminder
+# Reminder
 async def send_later(context: ContextTypes.DEFAULT_TYPE):
     job_data = context.job.data
     await context.bot.send_message(chat_id=job_data['chat_id'], text=job_data['text'])
 
-# Daily check
+# Daily ping
 async def daily_check():
     now = datetime.utcnow()
-    for user_id, last_seen in user_last_seen.items():
+    for user_id, data in db.items():
+        last_seen = datetime.fromisoformat(data.get("last_seen"))
         if now - last_seen > timedelta(days=1):
             try:
                 await application.bot.send_message(
-                    chat_id=user_id,
-                    text="Hey! Kore divasam aayallo kandittu "
+                    chat_id=int(user_id),
+                    text="Enthoru neramayi kandittu chetta 😢"
                 )
             except Exception as e:
                 logger.error("Daily message error: %s", e)
@@ -93,70 +100,57 @@ async def daily_check():
 # Message handler
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    user_last_seen[user_id] = datetime.utcnow()
     message = update.message.text.strip()
+    db.setdefault(str(user_id), {})["last_seen"] = str(datetime.utcnow())
+    save_db()
 
-    # Specific time reminder
     time_patterns = [
-        r"remind me at (\d{1,2}):(\d{2})\s*(am|pm)?",
-        r"remind me on (\d{1,2}):(\d{2})",
-        r"message me at (\d{1,2}):(\d{2})\s*(am|pm)?",
-        r"message me on (\d{1,2}):(\d{2})"
+        r"(?:remind|message).*?at (\d{1,2}):(\d{2})\s*(am|pm)?",
+        r"(?:remind|message).*?on (\d{1,2}):(\d{2})"
     ]
+
     for pattern in time_patterns:
         match = re.search(pattern, message.lower())
         if match:
-            hour = int(match.group(1))
-            minute = int(match.group(2))
-            meridian = match.group(3) if len(match.groups()) == 3 else None
+            hour, minute = int(match.group(1)), int(match.group(2))
+            meridian = match.group(3)
+            if meridian == "pm" and hour < 12: hour += 12
+            if meridian == "am" and hour == 12: hour = 0
 
-            # Adjust for AM/PM
-            if meridian == "pm" and hour < 12:
-                hour += 12
-            elif meridian == "am" and hour == 12:
-                hour = 0
-
-            # Set reminder time
             now = datetime.now()
             reminder_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             if reminder_time <= now:
                 reminder_time += timedelta(days=1)
 
             delay = reminder_time - now
-
             context.job_queue.run_once(
-                send_later,
-                when=delay,
-                data={'chat_id': user_id, 'text': "⏰ Hello njan veedum vanne 😁"}
+                send_later, when=delay,
+                data={'chat_id': user_id, 'text': "⏰ Njan vannu, chetta ❤️"}
             )
-            await update.message.reply_text(f"Okay! Njan {reminder_time.strftime('%I:%M %p')} nu message ayakkaame 🕒")
+            await update.message.reply_text(f"Okay! Njan {reminder_time.strftime('%I:%M %p')} message ayakkam 🕒")
             return
 
-    # Gemini girlfriend response
     response = ask_gemini(user_id, message)
     await update.message.reply_text(response)
 
-# Start command
+# Start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    user_last_seen[user_id] = datetime.utcnow()
+    db.setdefault(str(user_id), {})["last_seen"] = str(datetime.utcnow())
+    save_db()
     await update.message.reply_text("Hey! I’m your AI girlfriend 💬 Talk to me anytime, okay?")
 
-# Main function
+# Main
 async def main():
     global application
     application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
     scheduler.add_job(daily_check, trigger=IntervalTrigger(hours=24))
     scheduler.start()
-
     print("AI Bot running...")
     await application.run_polling()
 
-# Entry point
 if __name__ == "__main__":
     import nest_asyncio
     nest_asyncio.apply()
